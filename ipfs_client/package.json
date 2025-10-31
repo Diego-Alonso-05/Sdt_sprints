@@ -15,7 +15,8 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "cross-env NODE_OPTIONS=--no-deprecation set GENERATE_SOURCEMAP=false && react-scripts start",
+    "start": "react-scripts start",
+    "dev": "node init-client.mjs",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
