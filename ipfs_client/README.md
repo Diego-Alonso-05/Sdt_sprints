@@ -2,21 +2,15 @@
 - Make sure you have installed:
 *   node and npm (check with: [npm --version] and [node --version])
 *   ipfs (check with: [ipfs --version])
-ipsf + kubo(RPC API) for cli configuration and integration with react code (check with: [ipfs --version])
+*   ipfs must be initialized once: `ipfs init` (one-time setup)
 
 ## --- Client SETUP -- ##
 *   After cloning the whole project inside a terminal you need to install all the dependencies for the API to be able to run, for that do:
 cd ipfs_client
 npm install
-*   Insert the following rules to configure IPFS CORS on terminal:
-ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin "[\"http://localhost:3000\", \"http://127.0.0.1:3000\"]"
-ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods "[\"GET\", \"POST\", \"PUT\"]"
 
 # To run the client:
-- Before running the client app make sure you have running IPFS:
-ipfs daemon --enable-pubsub-experiment
-- Then run react client:
-npm start
+npm run dev
 
 # Data that Client sends when uploading to the nodeJS API
    * File: The file to upload
@@ -34,7 +28,19 @@ POST /upload - Upload file and announce peer presence
 * Runs inside the browser sandbox, so CORS (Cross-Origin Resource Sharing) rules are enforced by the browser
 * The browser enforces CORS (Runs inside the browser sandbox):
 * Even though the React app connects to a local IPFS daemon (http://127.0.0.1:5001/api/v0), the browser treats this as a cross-origin request, resulting in a CORS restriction.
-To allow browser access, the IPFS daemon must be configured with appropriate CORS headers using the rules mentioned above in this file. These rules will persist stored inside ~/.ipfs .
+* The `init-client.mjs` script automatically configures these CORS headers when using 'npm run dev'
+
+## Automated Startup Script
+The project includes init-client.mjs which automatically:
+- Makes sure we run our local ipfs daemon properly for our project, also ensuring the IPFS node is fully operational before the React app tries to connect to it.
+- Sets up the required IPFS configuration commands to allow browser access:
+'''
+Sets Access-Control-Allow-Origin to allow http://localhost:3000 and http://127.0.0.1:3000
+Sets Access-Control-Allow-Methods to allow GET, POST, and PUT requests
+These settings persist in your IPFS configuration (~/.ipfs)
+'''
+- Executes IPFS daemon with with PubSub enabled, by launching the local IPFS daemon with PubSub enabled:
+ipfs daemon --enable-pubsub-experiment
 
 ------------------------------------------------------------------
 
@@ -87,4 +93,3 @@ return () => {
 Empty [] = run once when component first mounts
 [value] = run when value changes
 No array = run on every render (usually not what you want)
-
