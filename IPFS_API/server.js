@@ -1,28 +1,25 @@
+// ----- IMPORTS & BASIC SETUP -----
 import express from "express";
 import multer from "multer";
 import { create } from "kubo-rpc-client";
 import cors from "cors";
-
+import fs from "fs";
+import path from "path";
 
 const app = express();
-const PORT = 3000;
-app.use(cors()); // Allow CORS to permit client AXIOS requests
-app.use(express.json()); // Parse JSON bodies
-
-
-// Handle file storage in cache(ram)
 const upload = multer({ storage: multer.memoryStorage() });
+const PORT = 3000;
 
-// Connect to local IPFS node through Kubo daemon
+app.use(cors());
+app.use(express.json());
+
 const ipfs = create({
-  url: 'http://127.0.0.1:5001/api/v0'
+  url: "http://127.0.0.1:5001/api/v0"
 });
 
-// Stores all clients that have connected to the API via http
-const discoveredPeers = new Map(); // Store discovered peers(map structure: peerId -> [addresses])
+// ----- PEER MANAGEMENT -----
+const discoveredPeers = new Map();
 
-// Attempts to connect to a peer using their multiaddresses(a peer can have multiple addresses)
-// Atempts to conncect to each address until one succeeds
 async function connectToPeer(peerAddrs) {
   for (const addr of peerAddrs) {
     try {
@@ -38,12 +35,11 @@ async function connectToPeer(peerAddrs) {
   return false;
 }
 
-
-// Test IPFS connection on startup
+// ----- IPFS CONNECTION TEST -----
 (async () => {
   try {
     const id = await ipfs.id();
-    console.log("Connected to IPFS local node!");
+    console.log("Connected to local IPFS node!");
     console.log("IPFS NODE:", id.id);
   } catch (err) {
     console.error("Failed to connect to IPFS daemon");
@@ -51,7 +47,7 @@ async function connectToPeer(peerAddrs) {
   }
 })();
 
-// Display number of connected peers every 15 seconds for monitoring
+// Display connected peers every 15 seconds
 setInterval(async () => {
   try {
     const peers = await ipfs.swarm.peers();
@@ -61,42 +57,78 @@ setInterval(async () => {
   }
 }, 15000);
 
+// ----- DOCUMENT VECTOR HANDLING ----- (Sprint 2)
+const VECTOR_PATH = path.join(process.cwd(), "docVector.json");
+
+// Create or update a simple vector with a new CID
+async function updateDocVector(newCid) {
+  console.log("Updating document vector with new CID: ", newCid);
+
+  let currentVector = {
+    version: "v1.0.0",
+    cids: [],
+    timestamp: new Date().toISOString()
+  };
+
+  // Try to read existing vector
+  if (fs.existsSync(VECTOR_PATH)) {
+    try {
+      const data = fs.readFileSync(VECTOR_PATH, "utf8");
+      currentVector = JSON.parse(data);
+    } catch (err) {
+      console.warn("Could not read docVector.json, creating new one...");
+    }
+  }
+
+  // Create updated version
+  const newVersion = {
+    version: `v${parseFloat(currentVector.version.slice(1)) + 0.1}`, // v1.0.0 → v1.1.0
+    cids: [...currentVector.cids, newCid],
+    timestamp: new Date().toISOString()
+  };
+
+  // Save back to file (overwrite old)
+  fs.writeFileSync(VECTOR_PATH, JSON.stringify(newVersion, null, 2));
+  console.log("Document vector updated successfully:", newVersion.version);
+}
+
+// -----upload ENDPOINT -----
 app.post("/upload", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).send("No file uploaded");
 
-  // Client send their IPFS node ID and addresses when uploading the file
-  const clientPeerId = req.body.peerId; // Extract Peer ID from request body
-  const clientAddrs = req.body.peerAddrs ? JSON.parse(req.body.peerAddrs) : []; // Extract Peer addresses from request body
+  const clientPeerId = req.body.peerId;
+  const clientAddrs = req.body.peerAddrs ? JSON.parse(req.body.peerAddrs) : [];
 
-  // When a client uploads a file, they announce their Peer ID
-  // To make sure we have this Peer added we store their info and connect with it
-  if (clientPeerId && clientAddrs.length > 0) { // verifies if values of clientPeerId and clientAddrs.length are not null/undefined/etc..
-    discoveredPeers.set(clientPeerId, clientAddrs); // Add peer to or local map (or update if already exists)
+  if (clientPeerId && clientAddrs.length > 0) {
+    discoveredPeers.set(clientPeerId, clientAddrs);
     console.log(`New peer discovered: ${clientPeerId}`);
-    console.log('Connecting to Peer..');
-    await connectToPeer(clientAddrs); // Immediately attempt connection to the new peer
+    console.log("Connecting to peer...");
+    await connectToPeer(clientAddrs);
   }
 
   try {
-    // Add uploaded file to IPFS
+    // 1. Add file to IPFS
     const result = await ipfs.add(req.file.buffer);
     const cid = result.cid.toString();
-
-    // Broadcast message to all peers via PubSub
-    // All connected peers subscribed to 'file-sharing' topic will receive this
-    const message = JSON.stringify({ type: "NEW_FILE", filename: req.file.originalname, cid });
-    await ipfs.pubsub.publish('file-sharing', new TextEncoder().encode(message));
-
     console.log("Uploaded CID:", cid);
-    console.log("Message broadcasted to peers");
 
+    // 2. Update document vector (no pending/confirmation logic)
+    await updateDocVector(cid);
+
+    // 3. Broadcast message as before
+    const message = JSON.stringify({ type: "NEW_FILE", filename: req.file.originalname, cid });
+    await ipfs.pubsub.publish("file-sharing", new TextEncoder().encode(message));
+
+    console.log("Message broadcasted to peers");
     res.json({ cid });
+
   } catch (err) {
     console.error(err);
     res.status(500).send("Error uploading file to IPFS");
   }
 });
 
+// ----- SERVER STARTUP -----
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
