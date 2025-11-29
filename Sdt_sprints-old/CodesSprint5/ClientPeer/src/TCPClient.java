@@ -52,7 +52,6 @@ public class TCPClient extends JFrame {
     private String confirmedHash = computeVectorHash(confirmedVector);
 
     // --- Sprint 5 ---
-
     // Heartbeat monitor for detecting Leader status
     private PeerHeartbeatMonitor heartbeatMonitor;
 
