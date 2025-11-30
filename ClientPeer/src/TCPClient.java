@@ -15,6 +15,10 @@
 
 import common.AppLog;
 
+// --- Sprint 6 ---
+// RaftElectionService for leader election
+import java.util.Random;
+
 import javax.swing.*;
 import java.awt.*;
 import java.io.*;
@@ -55,6 +59,10 @@ public class TCPClient extends JFrame {
 
     // Heartbeat monitor for detecting Leader status
     private PeerHeartbeatMonitor heartbeatMonitor;
+
+    // --- Sprint 6 ---
+    // Raft election service (handles RequestVote, VoteResponse, NewLeader messages)
+    private RaftElectionService raftService;
 
     // Pending proposal data (client tracks one proposal at a time)
     private Long pendingVersion = null;
@@ -161,10 +169,32 @@ public class TCPClient extends JFrame {
         // Start PubSub listener (receives heartbeats and vector updates)
         startPubSubListener();
 
-        // --- Sprint 5 ---
-        // Heartbeat monitor to detect Leader DOWN/UP
+        // --- Sprint 6 ---
+        // Initialize Raft election service.  Supplies our peer ID, the PubSub topic,
+        // and the confirmed vector version for up-to-date checks.
+        raftService = new RaftElectionService(
+                () -> peerIdField.getText(),
+                PUBSUB_TOPIC,
+                () -> confirmedVersion
+        );
+
+        // Heartbeat monitor with randomised election trigger.  When the Leader is
+        // considered DOWN, we log the event and schedule a small random delay
+        // (150–300 ms) before starting the Raft election.  This prevents
+        // multiple peers from initiating elections simultaneously.  On UP, we
+        // just log that heartbeats resumed.
         heartbeatMonitor = new PeerHeartbeatMonitor(
-                () -> log("Leader DOWN (no heartbeat for 25s)"),
+                () -> {
+                    log("Leader DOWN (no heartbeat for 25s)");
+                    new Thread(() -> {
+                        try {
+                            Thread.sleep(150 + new Random().nextInt(150));
+                        } catch (InterruptedException ignored) {}
+                        if (raftService != null) {
+                            raftService.startElection();
+                        }
+                    }, "raft-election-trigger").start();
+                },
                 () -> log("Leader UP again")
         );
         heartbeatMonitor.start();
@@ -206,6 +236,24 @@ public class TCPClient extends JFrame {
             // Messages sometimes come inside an IPFS envelope
             String inner = tryExtractBase64Data(json);
             if (inner != null) json = inner;
+
+            // --- Sprint 6 ---
+            // Handle Raft protocol messages before other message types.  The order of
+            // checks is important: RAFT messages do not carry UPDATE_VECTOR or
+            // COMMIT_VECTOR payloads.  If a RAFT message is processed, we return
+            // immediately to avoid double-handling.
+            if (json.contains("\"type\":\"RAFT_REQUEST_VOTE\"")) {
+                if (raftService != null) raftService.handleRequestVote(json);
+                return;
+            }
+            if (json.contains("\"type\":\"RAFT_VOTE_RESPONSE\"")) {
+                if (raftService != null) raftService.handleVoteResponse(json);
+                return;
+            }
+            if (json.contains("\"type\":\"RAFT_NEW_LEADER\"")) {
+                if (raftService != null) raftService.handleNewLeader(json);
+                return;
+            }
 
             // --- Sprint 5 ---
             // Heartbeat from Leader

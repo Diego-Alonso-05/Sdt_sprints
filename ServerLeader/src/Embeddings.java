@@ -1,4 +1,3 @@
-
 import common.AppLog;
 
 import java.io.BufferedReader;
@@ -11,31 +10,26 @@ public class Embeddings {
 
     public static float[] generate(File file) throws Exception {
 
-        // 🔥 Rutas ABSOLUTAS del entorno de Diego (modificables)
-        String pythonExe =
-                "C:\\Users\\di17j\\OneDrive\\Escritorio\\Sdt_sprints\\ServerLeader\\.venv\\Scripts\\python.exe";
+        String pythonExe = "C:\\Users\\qubit\\Desktop\\SDt\\SDt_Project\\ServerLeader\\.venv\\Scripts\\python.exe";
+        String scriptPath = "embed\\embed.py";
 
-        String scriptPath =
-                "C:\\Users\\di17j\\OneDrive\\Escritorio\\Sdt_sprints\\ServerLeader\\embed\\embed.py";
-
-        // 🔥 Log correcto usando el logger global
         AppLog.log("Using Python: " + pythonExe);
         AppLog.log("Using embed script: " + scriptPath);
         AppLog.log("\nWait a moment, working on embeddings...\n");
 
+        // Run Python THROUGH CMD so cwd is respected on Windows
         ProcessBuilder processBuilder = new ProcessBuilder(
+                "cmd.exe", "/c",
                 pythonExe,
                 scriptPath,
                 file.getAbsolutePath()
         );
 
-        // 🔥 Directorio de trabajo real del Leader
         processBuilder.directory(
-                new File("C:\\Users\\di17j\\OneDrive\\Escritorio\\Sdt_sprints\\ServerLeader")
+                new File("C:\\Users\\qubit\\Desktop\\SDt\\SDt_Project\\ServerLeader")
         );
 
         processBuilder.redirectErrorStream(true);
-
         Process process = processBuilder.start();
 
         String output = readAll(process.getInputStream());
