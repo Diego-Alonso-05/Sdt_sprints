@@ -44,6 +44,9 @@ public class PeerHeartbeatMonitor {
         // Start the initial timeout (no heartbeat seen yet).
         resetTimeout();
     }
+    public void resetTimeoutFromOutside() {
+        resetTimeout();
+    }
 
     // -------------------------------------------------------------------------
     // Called by TCPClient when a HEARTBEAT message is received

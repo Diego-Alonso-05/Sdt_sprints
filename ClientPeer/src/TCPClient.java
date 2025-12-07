@@ -67,7 +67,7 @@ public class TCPClient extends JFrame {
         knownPeers.add(peerId);
 
         setupGUI();
-        startMQTTListeners();
+        startMQTTListener();
         startDiscovery();
 
         AppLog.setSink(this::log);
@@ -200,16 +200,30 @@ public class TCPClient extends JFrame {
      *  - PUBSUB_TOPIC: vector / Raft messages
      *  - DISCOVERY_TOPIC: peer discovery (online/offline)
      */
-    private void startMQTTListeners() {
-        // Vector + Raft messages
-        MessageBus.subscribe(PUBSUB_TOPIC,
-                json -> SwingUtilities.invokeLater(() -> processMQTT(json)));
+    private void startMQTTListener() {
 
-        // Peer discovery messages
-        MessageBus.subscribe(DISCOVERY_TOPIC,
-                json -> SwingUtilities.invokeLater(() -> processDiscovery(json)));
+        // Existing vector handling
+        MessageBus.subscribe("sdt/vector", json ->
+                SwingUtilities.invokeLater(() -> processMQTT(json)));
 
-        log("[MQTT] Subscribed to " + PUBSUB_TOPIC + " and " + DISCOVERY_TOPIC);
+        // ⭐ NEW: Subscribe to leader heartbeats
+        MessageBus.subscribe("sdt/heartbeat", json ->
+                SwingUtilities.invokeLater(() -> {
+                    log("[HB-IN] " + json);
+
+                    if (json.contains("\"type\":\"HEARTBEAT\"")) {
+                        if (heartbeatMonitor != null) {
+                            heartbeatMonitor.resetTimeoutFromOutside();
+                        }
+                    }
+
+                    // Forward heartbeats into RAFT if needed
+                    if (raftService != null && json.contains("\"type\":\"HEARTBEAT\"")) {
+                        // optional: could update internal leaderId
+                    }
+                }));
+
+        log("[MQTT] Subscribed to sdt/vector and sdt/heartbeat");
     }
 
     // =========================================================================
