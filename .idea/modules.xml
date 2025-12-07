@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/ClientPeer/ClientPeer.iml" filepath="$PROJECT_DIR$/ClientPeer/ClientPeer.iml" />
+      <module fileurl="file://$PROJECT_DIR$/Sdt_sprints.iml" filepath="$PROJECT_DIR$/Sdt_sprints.iml" />
+      <module fileurl="file://$PROJECT_DIR$/ServerLeader/ServerLeader.iml" filepath="$PROJECT_DIR$/ServerLeader/ServerLeader.iml" />
+      <module fileurl="file://$PROJECT_DIR$/common/common.iml" filepath="$PROJECT_DIR$/common/common.iml" />
+    </modules>
+  </component>
+</project>
