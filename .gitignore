@@ -1,0 +1,45 @@
+# ---------------------------
+# PYTHON VENV / EMBEDDINGS
+# ---------------------------
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+embed/__pycache__/
+embed/*.pyc
+
+# ---------------------------
+# JAVA BUILD OUTPUT
+# ---------------------------
+out/
+build/
+*.class
+*.log
+
+# ---------------------------
+# PROJECT STATE / TEMP FILES
+# ---------------------------
+uploads/
+state/temp_embeddings/
+state/embeddings/
+state/*.txt
+*.DS_Store
+
+# ---------------------------
+# IDE / SYSTEM FILES
+# ---------------------------
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+Thumbs.db
+
+# ---------------------------
+# OS-SPECIFIC JUNK
+# ---------------------------
+.DS_Store
+ehthumbs.db
+desktop.ini
