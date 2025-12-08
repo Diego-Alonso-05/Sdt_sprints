@@ -4,7 +4,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 
-public class FileManager {
+public class FileManager_server {
 
     public static void saveTempEmbedding(String cid, float[] embedding) throws IOException {
         File dir = new File("state/temp_embeddings");

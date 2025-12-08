@@ -10,26 +10,53 @@ public class Embeddings {
 
     public static float[] generate(File file) throws Exception {
 
-        // === YOUR LAPTOP PATHS ===
-        String projectRoot = "C:\\Users\\di17j\\OneDrive\\Escritorio\\Sdt_sprints\\ServerLeader";
+        // === Dynamic project root detection ===
+        // Attempt to locate the module root containing .venv and embed/embed.py.  If the
+        // application is started from the parent directory of multiple modules,
+        // System.getProperty("user.dir") will point at the project root.  In that
+        // case we fall back to a ServerLeader subdirectory.  If the expected files
+        // are still not found, throw an informative error.
+        File cwd = new File(System.getProperty("user.dir"));
+        File base = cwd;
+        File pyExe = new File(base, ".venv\\Scripts\\python.exe");
+        File script = new File(base, "embed\\embed.py");
 
-        String pythonExe = projectRoot + "\\.venv\\Scripts\\python.exe";
-        String scriptPath = "embed\\embed.py";
+        if (!pyExe.exists() || !script.exists()) {
+            // check for ServerLeader submodule
+            File alt = new File(cwd, "ServerLeader");
+            File altExe = new File(alt, ".venv\\Scripts\\python.exe");
+            File altScript = new File(alt, "embed\\embed.py");
+            if (alt.exists() && altExe.exists() && altScript.exists()) {
+                base = alt;
+                pyExe = altExe;
+                script = altScript;
+            }
+        }
 
-        AppLog.log("Using Python: " + pythonExe);
-        AppLog.log("Using embed script: " + scriptPath);
+        if (!pyExe.exists()) {
+            throw new IOException("Python executable not found. Searched: "
+                    + pyExe.getAbsolutePath());
+        }
+        if (!script.exists()) {
+            throw new IOException("embed.py not found. Searched: "
+                    + script.getAbsolutePath());
+        }
+
+        AppLog.log("Using Python: " + pyExe.getAbsolutePath());
+        AppLog.log("Using embed script: " + script.getAbsolutePath());
         AppLog.log("\nWait a moment, working on embeddings...\n");
 
-        // Run Python THROUGH CMD so cwd is respected on Windows
+        // Prepare process builder to run the embed script.  Invoke Python directly
+        // rather than through cmd.exe; the working directory is explicitly set
+        // so that relative imports inside embed.py work correctly.
         ProcessBuilder processBuilder = new ProcessBuilder(
-                "cmd.exe", "/c",
-                pythonExe,
-                scriptPath,
+                pyExe.getAbsolutePath(),
+                script.getAbsolutePath(),
                 file.getAbsolutePath()
         );
 
-        // Set the working directory to the project root
-        processBuilder.directory(new File(projectRoot));
+        // Set the working directory to the module root
+        processBuilder.directory(base);
 
         processBuilder.redirectErrorStream(true);
         Process process = processBuilder.start();

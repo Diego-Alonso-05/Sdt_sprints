@@ -41,3 +41,6 @@ Thumbs.db
 .DS_Store
 ehthumbs.db
 desktop.ini
+
+# Ignore generated client runtime folders
+sdt-client-*

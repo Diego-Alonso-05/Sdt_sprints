@@ -1,12 +1,9 @@
 import common.AppLog;
 import common.MessageBus;
-
-import javax.swing.*;
-import java.awt.BorderLayout;
-import java.awt.FlowLayout;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.security.MessageDigest;
@@ -16,19 +13,23 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.Collections;
+
+// Sprint 7 imports
+import common.AppLog;
+import common.MessageBus;
+import java.util.concurrent.CopyOnWriteArrayList;
+// Import the client-side file manager and vector index service
+// (these classes will be added for query processing)
+import javax.swing.*;
 
 /**
  * TCPClient (Peer)
  * ----------------
- * Responsibilities:
- *   - Upload files to the Leader using TCP
- *   - Maintain a local in-memory vector
- *   - Receive UPDATE_VECTOR messages via MQTT
- *   - Send CONFIRM_VECTOR messages via MQTT
- *   - Apply COMMIT_VECTOR updates
- *   - Participate in Raft leader election (via MQTT)
- *   - Discover other peers via MQTT
- *   - GUI for file selection and logs
+ * Modified to support embedding propagation: when receiving an UPDATE_VECTOR
+ * message containing an embedding array, the client stores the embedding
+ * temporarily using FileManager. On commit, it promotes temporary embeddings
+ * to the permanent state directory before updating the FAISS index.
  */
 public class TCPClient extends JFrame {
 
@@ -60,6 +61,51 @@ public class TCPClient extends JFrame {
     private RaftElectionService   raftService;
     private PeerHeartbeatMonitor  heartbeatMonitor;
 
+    // ----------------------------------------------------------------------
+    // Sprint 7: flag to indicate if this peer is currently processing a
+    // search task. Only one query can be processed at a time per peer. When
+    // busy is true, TASK_ASSIGN messages are ignored. After sending a
+    // TASK_RESULT, busy is reset to false.
+    private volatile boolean busy = false;
+
+    // ----------------------------------------------------------------------
+    // Root detection for client
+    // ----------------------------------------------------------------------
+    /**
+     * Cached root directory for the client. This is computed once on
+     * first access and used for locating the state directory where
+     * embeddings are stored. The logic attempts to locate the ClientPeer
+     * module if running from the project root, otherwise falls back to
+     * the current working directory.
+     */
+    private static File CLIENT_ROOT = null;
+
+    /**
+     * Returns the root directory for this peer. If the application is
+     * launched from within the ClientPeer module, the working directory
+     * itself is returned. Otherwise, if a ClientPeer subdirectory exists
+     * relative to the current working directory, that directory is used.
+     * Finally, as a fallback, the current working directory is returned.
+     */
+    public static File getClientRoot() {
+        if (CLIENT_ROOT != null) return CLIENT_ROOT;
+        File cwd = new File(System.getProperty("user.dir"));
+        // If a ClientPeer.iml exists here, we are inside the module
+        if (new File(cwd, "ClientPeer.iml").exists()) {
+            CLIENT_ROOT = cwd;
+            return CLIENT_ROOT;
+        }
+        // If a ClientPeer directory exists one level down, use it
+        File cp = new File(cwd, "ClientPeer");
+        if (cp.exists()) {
+            CLIENT_ROOT = cp;
+            return CLIENT_ROOT;
+        }
+        // Fallback
+        CLIENT_ROOT = cwd;
+        return CLIENT_ROOT;
+    }
+
     public TCPClient() {
         super("Peer Client");
 
@@ -88,15 +134,15 @@ public class TCPClient extends JFrame {
         fileField = new JTextField(20);
         JButton browse = new JButton("...");
 
-        JPanel top = new JPanel(new FlowLayout());
+        JPanel top = new JPanel(new java.awt.FlowLayout());
         top.add(new JLabel("File:"));
         top.add(fileField);
         top.add(browse);
         top.add(uploadButton);
         top.add(refreshButton);
 
-        add(top, BorderLayout.NORTH);
-        add(scrollPane, BorderLayout.CENTER);
+        add(top, java.awt.BorderLayout.NORTH);
+        add(scrollPane, java.awt.BorderLayout.CENTER);
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         pack();
@@ -286,6 +332,12 @@ public class TCPClient extends JFrame {
             return;
         }
 
+        // Sprint 7: handle task assignments from the leader.
+        if (json.contains("\"type\":\"TASK_ASSIGN\"")) {
+            handleTaskAssign(json);
+            return;
+        }
+
         // RAFT messages
         if (raftService != null) {
 
@@ -320,8 +372,61 @@ public class TCPClient extends JFrame {
             String proposalId = extract(json, "proposalId");
             long version      = Long.parseLong(extract(json, "version"));
             String hash       = extract(json, "hash");
+            String newCid     = extract(json, "newCid");
 
-            List<String> vector = extractList(json);
+            // Parse embedding array if present and save to temp storage
+            try {
+                int embedStart = json.indexOf("\"embedding\":[");
+                if (embedStart != -1) {
+                    int start = embedStart + "\"embedding\": [".length();
+                    // account for both possible "embedding": [ or "embedding":[ formats
+                    if (json.charAt(start) == '[') {
+                        start++;
+                    }
+                    int end   = json.indexOf(']', start);
+                    if (end != -1) {
+                        String embStr = json.substring(start, end);
+                        String[] parts = embStr.split(",");
+                        float[] emb = new float[parts.length];
+                        for (int i = 0; i < parts.length; i++) {
+                            String p = parts[i].trim();
+                            if (!p.isEmpty()) {
+                                emb[i] = Float.parseFloat(p);
+                            }
+                        }
+                        if (newCid != null && !newCid.isEmpty()) {
+                            FileManager_client.saveTempEmbedding(newCid, emb);
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                log("[Peer] Failed to parse/save embedding: " + ex.getMessage());
+            }
+
+            // Parse vector list separately
+            List<String> vector = new ArrayList<>();
+            try {
+                int vs = json.indexOf("\"vector\":[");
+                if (vs != -1) {
+                    int start = vs + "\"vector\":[".length();
+                    int end   = json.indexOf(']', start);
+                    if (end != -1) {
+                        String inner = json.substring(start, end);
+                        String[] parts = inner.split(",");
+                        for (String p : parts) {
+                            String s = p.trim();
+                            if (s.startsWith("\"") && s.endsWith("\"")) {
+                                s = s.substring(1, s.length() - 1);
+                            }
+                            if (!s.isEmpty()) {
+                                vector.add(s);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                log("[Peer] Failed to parse vector: " + ex.getMessage());
+            }
 
             synchronized (currentVector) {
                 currentVector.clear();
@@ -331,10 +436,10 @@ public class TCPClient extends JFrame {
             log("[Peer] UPDATE_VECTOR applied (size=" + currentVector.size() + ")");
 
             String confirm =
-                    "{\"type\":\"CONFIRM_VECTOR\","
-                            + "\"proposalId\":\"" + proposalId + "\","
-                            + "\"peerId\":\"" + peerId + "\","
-                            + "\"hash\":\"" + hash + "\"}";
+                    "{\"type\":\"CONFIRM_VECTOR\"," +
+                            "\"proposalId\":\"" + proposalId + "\"," +
+                            "\"peerId\":\"" + peerId + "\"," +
+                            "\"hash\":\"" + hash + "\"}";
 
             MessageBus.publish(PUBSUB_TOPIC, confirm);
             log("[Peer] Sent CONFIRM_VECTOR");
@@ -356,12 +461,20 @@ public class TCPClient extends JFrame {
 
             log("[Peer] COMMIT_VECTOR applied. New version=" + version);
 
-            // --------- NEW: update local embedding index ----------
+            // Promote temporary embeddings to final storage before updating index
             List<String> snapshot;
             synchronized (currentVector) {
                 snapshot = new ArrayList<>(currentVector);
             }
+            for (String cid : snapshot) {
+                try {
+                    FileManager_client.promoteTempEmbedding(cid);
+                } catch (IOException ex) {
+                    log("[Peer] Failed to promote temp embedding for CID " + cid + ": " + ex.getMessage());
+                }
+            }
 
+            // --------- NEW: update local embedding index ----------
             boolean accepted = VectorIndexService.getInstance()
                     .updateIndexAsync(snapshot, version);
 
@@ -369,6 +482,81 @@ public class TCPClient extends JFrame {
 
         } catch (Exception e) {
             log("[Peer] COMMIT_VECTOR error: " + e.getMessage());
+        }
+    }
+
+    // --------------------------------------------------------------------
+    // Sprint 7: TASK_ASSIGN handler
+    // --------------------------------------------------------------------
+    /**
+     * Processes a TASK_ASSIGN message from the leader. If this peer is not
+     * currently busy processing another query, it will perform a nearest
+     * neighbour search over its local vector index using the provided query
+     * embedding, produce a list of top CIDs, and publish a TASK_RESULT
+     * message. Only one peer should process a given query, but peers make
+     * this decision independently by checking their busy flag.
+     *
+     * Message format:
+     * {
+     *   "type":"TASK_ASSIGN",
+     *   "queryId":"<id>",
+     *   "leaderId":"<leader-id>",
+     *   "embedding":[ ... ]
+     * }
+     */
+    private void handleTaskAssign(String json) {
+        try {
+            if (busy) {
+                // Another query is currently being processed; ignore.
+                return;
+            }
+            String queryId = extract(json, "queryId");
+            if (queryId == null || queryId.isEmpty()) return;
+            // Parse embedding array
+            float[] emb = null;
+            int ei = json.indexOf("\"embedding\":[");
+            if (ei != -1) {
+                int start = ei + "\"embedding\": [".length();
+                // handle both spaced and non-spaced
+                if (json.charAt(start) == '[') start++;
+                int end = json.indexOf(']', start);
+                if (end != -1) {
+                    String body = json.substring(start, end);
+                    String[] nums = body.split(",");
+                    emb = new float[nums.length];
+                    for (int i = 0; i < nums.length; i++) {
+                        String p = nums[i].trim();
+                        if (!p.isEmpty()) {
+                            emb[i] = Float.parseFloat(p);
+                        }
+                    }
+                }
+            }
+            if (emb == null) {
+                // no embedding provided
+                return;
+            }
+            // Mark busy
+            busy = true;
+            // Perform search over local index
+            List<String> topCids = VectorIndexService.getInstance().search(emb, 3);
+            // Build result message
+            StringBuilder sb = new StringBuilder();
+            sb.append("{\"type\":\"TASK_RESULT\",");
+            sb.append("\"queryId\":\"").append(queryId).append("\",");
+            sb.append("\"peerId\":\"").append(peerId).append("\",");
+            sb.append("\"results\":[");
+            for (int i = 0; i < topCids.size(); i++) {
+                if (i > 0) sb.append(",");
+                sb.append("\"").append(topCids.get(i)).append("\"");
+            }
+            sb.append("]}");
+            MessageBus.publish(PUBSUB_TOPIC, sb.toString());
+            log("[Peer] TASK_RESULT sent for query " + queryId + " (" + topCids.size() + ")");
+        } catch (Exception e) {
+            log("[Peer] TASK_ASSIGN error: " + e.getMessage());
+        } finally {
+            busy = false;
         }
     }
 
@@ -397,27 +585,6 @@ public class TCPClient extends JFrame {
             }
         } catch (Exception ignored) {}
         return null;
-    }
-
-    private List<String> extractList(String json) {
-        List<String> out = new ArrayList<>();
-        try {
-            int s = json.indexOf('[');
-            int e = json.indexOf(']');
-            if (s == -1 || e == -1) return out;
-
-            String inner = json.substring(s + 1, e);
-            String[] parts = inner.split(",");
-
-            for (String p : parts) {
-                p = p.trim();
-                if (p.startsWith("\"")) p = p.substring(1);
-                if (p.endsWith("\""))   p = p.substring(0, p.length() - 1);
-                if (!p.isBlank()) out.add(p);
-            }
-
-        } catch (Exception ignored) {}
-        return out;
     }
 
     // =========================================================================

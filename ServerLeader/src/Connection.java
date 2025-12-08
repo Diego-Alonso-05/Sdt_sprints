@@ -62,7 +62,14 @@ public class Connection implements Runnable {
             // ================================================================
             // STEP 2 — Read the uploaded file (raw bytes)
             // ================================================================
-            File uploadsDir = new File("uploads");
+            // Determine a stable base directory for saving state.  The working
+            // directory may be the root of a multi‑module project; in that case
+            // use the ServerLeader module if present.  Otherwise use the current
+            // working directory.
+            File baseDir = detectServerRoot();
+
+            // Ensure the uploads folder lives inside the server module (next to src)
+            File uploadsDir = new File(baseDir, "uploads");
             if (!uploadsDir.exists()) uploadsDir.mkdirs();
 
             File outputFile = new File(uploadsDir, proposalId + ".bin");
@@ -86,10 +93,16 @@ public class Connection implements Runnable {
                 float[] embedding = Embeddings.generate(outputFile);
                 AppLog.log("[Connection] Embedding generated, length = " + embedding.length);
 
+                // Store the embedding in the leader for later propagation to peers.
+                TCPServer.storeEmbedding(proposalId, embedding);
+
                 // ------------------------------------------------------------
-                // STEP 4 — Save embedding to /state/embeddings/embedding_<CID>.txt
+                // STEP 4 — Save embedding to state/embeddings/embedding_<CID>.txt
                 // ------------------------------------------------------------
-                Path embeddingsDir = Paths.get("state", "embeddings");
+                // Use the same base directory used for uploads.  Persist
+                // embeddings under a state folder to separate them from
+                // temporary files and to mirror prior behaviour (state/embeddings).
+                Path embeddingsDir = Paths.get(baseDir.getAbsolutePath(), "state", "embeddings");
                 Files.createDirectories(embeddingsDir);
 
                 Path embFile = embeddingsDir.resolve("embedding_" + newCid + ".txt");
@@ -133,5 +146,31 @@ public class Connection implements Runnable {
         try {
             socket.close();
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * Attempts to locate the root directory for the server module.  When the
+     * application is started from the parent directory of multiple modules,
+     * {@code user.dir} will point at the project root rather than the
+     * ServerLeader module.  In that case, if a subdirectory named
+     * "ServerLeader" exists, it will be used as the base directory.  If
+     * {@code .venv} exists in the current working directory, we assume the
+     * application has been started from within the module itself and return
+     * it directly.  The returned directory is used for consistent placement
+     * of uploads and embeddings.
+     */
+    private static File detectServerRoot() {
+        File cwd = new File(System.getProperty("user.dir"));
+        // If .venv exists here, we are already in the module root
+        if (new File(cwd, ".venv").exists()) {
+            return cwd;
+        }
+        // Otherwise, check for a ServerLeader subdirectory
+        File alt = new File(cwd, "ServerLeader");
+        if (alt.exists() && alt.isDirectory()) {
+            return alt;
+        }
+        // Fallback: use the current working directory
+        return cwd;
     }
 }

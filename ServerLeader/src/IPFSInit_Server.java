@@ -3,7 +3,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-public class IPFSInit {
+public class IPFSInit_Server {
 
     /** Checks if the IPFS API is responding locally (default 127.0.0.1:5001). */
     public static boolean isIpfsRunning() {
